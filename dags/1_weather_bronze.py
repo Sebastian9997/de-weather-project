@@ -2,6 +2,7 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.models import Variable
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 from datetime import datetime, timedelta
 import requests
 import json
@@ -79,3 +80,10 @@ with DAG(
         task_id='fetch_data_and_load_to_s3',
         python_callable=fetch_data_and_load_to_s3
     )
+
+    trigger_silver = TriggerDagRunOperator(
+    task_id="trigger_silver_layer",
+    trigger_dag_id="2_weather_silver_transformation", # Must match the DAG ID in your silver file
+)
+
+task_get_data_and_load_to_s3 >> trigger_silver
