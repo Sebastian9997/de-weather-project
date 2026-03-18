@@ -10,26 +10,51 @@ import os
 def fetch_data_and_load_to_s3():
     # get API key from Airflow Variables
     api_key = Variable.get("owm_api_key")
-    city = "Warsaw"
-    url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
-    
-    response = requests.get(url)
-    response.raise_for_status()  # Check for HTTP errors before proceeding
-    data = response.json()
 
     # Connect to S3 and upload the file
     hook = S3Hook('aws_s3_conn')
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"weather_{timestamp}.json"
+    capitals = [
+        {"name": "Warsaw", "lat": 52.2297, "lon": 21.0122},
+        {"name": "Berlin", "lat": 52.5200, "lon": 13.4050},
+        {"name": "Paris", "lat": 48.8566, "lon": 2.3522},
+        {"name": "London", "lat": 51.5072, "lon": -0.1276},
+        {"name": "Madrid", "lat": 40.4168, "lon": -3.7038},
+        {"name": "Rome", "lat": 41.9028, "lon": 12.4964},
+        {"name": "Prague", "lat": 50.0755, "lon": 14.4378},
+        {"name": "Vienna", "lat": 48.2082, "lon": 16.3738}
+    ]
 
-    print(f"Sending {filename} to S3...")
-    hook.load_string(
-        string_data=json.dumps(data),
-        key=f"bronze/{filename}",
-        bucket_name='de-weather-project-raw-data-owm',
-        replace=True
-    )
+    for city in capitals:
+        city_name = city["name"]
+        lat = city["lat"]
+        lon = city["lon"]
+
+        # New One Call API 3.0 URL
+        url = f"https://api.openweathermap.org/data/3.0/onecall?lat={lat}&lon={lon}&exclude=minutely,hourly,daily,alerts&appid={api_key}&units=metric"
+
+        try:
+            response = requests.get(url)
+            response.raise_for_status()  # Check for HTTP errors before proceeding
+            data = response.json()
+            data['city'] = city_name  # Add city name to the data for better identification
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{city_name.lower()}_{timestamp}.json"
+            s3_key = f"bronze/{city_name.lower()}/{filename}"
+
+            print(f"Sending {city_name} data to S3: {s3_key}")
+            
+            hook.load_string(
+                string_data=json.dumps(data),
+                key=s3_key,
+                bucket_name='de-weather-project-raw-data-owm',
+                replace=True
+            )
+        except Exception as e:
+            print(f"Error fetching data for {city_name}: {e}")
+            continue
+
     print("Upload successful!")
 
 
