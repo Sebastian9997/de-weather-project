@@ -82,7 +82,7 @@ with DAG(
     '2_weather_silver_transformation',
     default_args=default_args,
     description='Aggregates hourly Bronze JSONs into a daily Silver Parquet file',
-    schedule_interval='@hourly', # Runs every hour to keep your dashboard "live"
+    schedule_interval=None, # Runs only when triggered by the Bronze DAG"
     catchup=False
 ) as dag:
 
