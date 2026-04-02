@@ -37,7 +37,7 @@ def transform_bronze_to_silver(ds_nodash, **kwargs):
             data = json.loads(content)
             
             all_data.append({
-                'city': data.get('city_name'),
+                'city': data.get('city'),
                 'temp': data['current']['temp'],
                 'humidity': data['current']['humidity'],
                 'wind_speed': data['current']['wind_speed'],
