@@ -23,7 +23,8 @@ services:
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
-      - _PIP_ADDITIONAL_DEPENDENCIES=apache-airflow-providers-amazon boto3 pandas pyarrow s3fs
+      # Updated variable name to official standard and added Google provider
+      - _PIP_ADDITIONAL_REQUIREMENTS=apache-airflow-providers-amazon apache-airflow-providers-google boto3 pandas pyarrow s3fs
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
@@ -43,7 +44,8 @@ services:
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
       - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
-      - _PIP_ADDITIONAL_DEPENDENCIES=apache-airflow-providers-amazon boto3 pandas pyarrow s3fs
+      # Updated variable name to official standard and added Google provider
+      - _PIP_ADDITIONAL_REQUIREMENTS=apache-airflow-providers-amazon apache-airflow-providers-google boto3 pandas pyarrow s3fs
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
