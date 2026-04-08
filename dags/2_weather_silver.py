@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
+from airflow.providers.amazon.aws.transfers.s3_to_gcs import S3ToGCSOperator
 
 # --- CONFIGURATION ---
 S3_CONN_ID = 'aws_s3_conn'
@@ -91,3 +92,15 @@ with DAG(
         python_callable=transform_bronze_to_silver
         # Note: In Airflow 2.x, 'provide_context=True' is default when using keywords like ds_nodash
     )
+
+    sync_to_gcp = S3ToGCSOperator(
+    task_id='sync_s3_to_gcs',
+    bucket='de-weather-project-raw-data-owm',
+    prefix='silver/daily_weather_',
+    dest_gcs='gs://de-weather-project-silver-gold/silver/',
+    aws_conn_id='aws_s3_conn',
+    gcp_conn_id='google_cloud_default',
+    replace=True                           # nadpisuj, jeśli plik już istnieje
+)
+
+    transform_task >> sync_to_gcp
