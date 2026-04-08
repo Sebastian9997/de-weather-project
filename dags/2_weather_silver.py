@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
-from airflow.providers.amazon.aws.transfers.s3_to_gcs import S3ToGCSOperator
+from airflow.providers.google.cloud.transfers.s3_to_gcs import S3ToGCSOperator
 
 # --- CONFIGURATION ---
 S3_CONN_ID = 'aws_s3_conn'
@@ -100,7 +100,7 @@ with DAG(
     dest_gcs='gs://de-weather-project-silver-gold/silver/',
     aws_conn_id='aws_s3_conn',
     gcp_conn_id='google_cloud_default',
-    replace=True                           # nadpisuj, jeśli plik już istnieje
+    replace=True
 )
 
     transform_task >> sync_to_gcp
