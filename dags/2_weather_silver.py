@@ -97,7 +97,7 @@ with DAG(
     task_id='sync_s3_to_gcs',
     bucket='de-weather-project-raw-data-owm',
     prefix='silver/daily_weather_',
-    dest_gcs='gs://de-weather-project-silver-gold/silver/',
+    dest_gcs='gs://de-weather-project-silver-gold/',
     aws_conn_id='aws_s3_conn',
     gcp_conn_id='google_cloud_default',
     replace=True
