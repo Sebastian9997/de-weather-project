@@ -53,6 +53,9 @@ def transform_bronze_to_silver(ds_nodash, **kwargs):
 
     # 3. Create DataFrame
     df = pd.DataFrame(all_data)
+
+    # Force the datetime column down to microsecond precision for BigQuery compatibility
+    df['extraction_time'] = df['extraction_time'].astype('datetime64[us]')
     
     # 4. Convert to Parquet in memory
     parquet_buffer = io.BytesIO()
