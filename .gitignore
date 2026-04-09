@@ -1,5 +1,27 @@
+# Airflow
 logs/
-data/
-plugins/
+airflow.db
+airflow-webserver.pid
+
+# Python
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment variables / secrets
+.env
+.env.*
+*.env
+
+# Cloud credentials
+*.json
+*.pem
+*.key
+*.p12
+
+# macOS / misc
 .DS_Store
+
+# Data / local artifacts
+data/
