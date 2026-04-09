@@ -191,6 +191,8 @@ Geographic visualization
 - Europe map with bubbles representing cities
 - bubble size & color = average daily temperature
 
+https://lookerstudio.google.com/reporting/1e34ae0c-65fc-44e3-b483-be6c3d9feac6
+
 ---
 
 ### Key Engineering Decisions
