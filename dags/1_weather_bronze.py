@@ -12,7 +12,7 @@ def fetch_data_and_load_to_s3():
     # get API key from Airflow Variables
     api_key = Variable.get("owm_api_key")
 
-    # Connect to S3 and upload the file
+    # Connect to S3 using Airflow's S3Hook
     hook = S3Hook('aws_s3_conn')
 
     capitals = [
@@ -36,7 +36,7 @@ def fetch_data_and_load_to_s3():
 
         try:
             response = requests.get(url)
-            response.raise_for_status()  # Check for HTTP errors before proceeding
+            response.raise_for_status() 
             data = response.json()
             data['city'] = city_name  # Add city name to the data for better identification
 
@@ -72,7 +72,7 @@ with DAG(
     '1_weather_collector_bronze',
     default_args=default_args,
     description='Raw data download from OpenWeatherMap and upload to S3',
-    schedule_interval='@hourly', # Run every hour
+    schedule_interval='@hourly',
     catchup=False,
     tags=['weather', 'bronze']
 ) as dag:
@@ -83,7 +83,7 @@ with DAG(
 
     trigger_silver = TriggerDagRunOperator(
     task_id="trigger_silver_layer",
-    trigger_dag_id="2_weather_silver_transformation", # Must match the DAG ID in your silver file
+    trigger_dag_id="2_weather_silver_transformation",
 )
 
 task_get_data_and_load_to_s3 >> trigger_silver

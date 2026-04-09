@@ -7,7 +7,7 @@ from airflow.operators.python import PythonOperator
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.google.cloud.transfers.s3_to_gcs import S3ToGCSOperator
 
-# --- CONFIGURATION ---
+# configuration for S3 and bucket
 S3_CONN_ID = 'aws_s3_conn'
 BUCKET_NAME = 'de-weather-project-raw-data-owm'
 
@@ -18,11 +18,11 @@ def transform_bronze_to_silver(ds_nodash, **kwargs):
     """
     s3_hook = S3Hook(aws_conn_id=S3_CONN_ID)
     
-    # 1. Look for all files from the SPECIFIC logical date (ds_nodash)
-    # This makes the DAG "Time-Travel Proof"
+    # look for all files from the SPECIFIC logical date (ds_nodash)
+   
     all_keys = s3_hook.list_keys(bucket_name=BUCKET_NAME, prefix='bronze/')
     
-    # Filter keys that match the date Airflow is currently processing
+    # filter keys that match the date Airflow is currently processing
     target_keys = [k for k in all_keys if ds_nodash in k]
     
     if not target_keys:
@@ -31,7 +31,7 @@ def transform_bronze_to_silver(ds_nodash, **kwargs):
 
     all_data = []
 
-    # 2. Extract and Flatten
+    # Extract and Flatten
     for key in target_keys:
         try:
             content = s3_hook.read_key(key, bucket_name=BUCKET_NAME)
@@ -51,17 +51,16 @@ def transform_bronze_to_silver(ds_nodash, **kwargs):
         except Exception as e:
             print(f"Error processing key {key}: {e}")
 
-    # 3. Create DataFrame
     df = pd.DataFrame(all_data)
 
     # Force the datetime column down to microsecond precision for BigQuery compatibility
     df['extraction_time'] = df['extraction_time'].astype('datetime64[us]')
     
-    # 4. Convert to Parquet in memory
+    # Convert to Parquet in memory
     parquet_buffer = io.BytesIO()
     df.to_parquet(parquet_buffer, index=False, engine='pyarrow')
     
-    # 5. Save as a single daily file (Overwrites every hour with latest data)
+    # Save as a single daily file (Overwrites every hour with latest data)
     silver_key = f"silver/daily_weather_{ds_nodash}.parquet"
     
     s3_hook.load_bytes(
@@ -73,11 +72,11 @@ def transform_bronze_to_silver(ds_nodash, **kwargs):
     
     print(f"Successfully processed {len(df)} records into {silver_key}")
 
-# --- DAG DEFINITION ---
+# DAG DEFINITION
 default_args = {
     'owner': 'sebastian',
     'depends_on_past': False,
-    'start_date': datetime(2026, 3, 18), # Adjust to when you started collecting data
+    'start_date': datetime(2026, 3, 18),
     'retries': 1,
     'retry_delay': timedelta(minutes=5),
 }
@@ -93,7 +92,6 @@ with DAG(
     transform_task = PythonOperator(
         task_id='transform_bronze_to_silver',
         python_callable=transform_bronze_to_silver
-        # Note: In Airflow 2.x, 'provide_context=True' is default when using keywords like ds_nodash
     )
 
     sync_to_gcp = S3ToGCSOperator(
