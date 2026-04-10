@@ -29,7 +29,7 @@ services:
       - ./scripts:/opt/airflow/scripts
       - ./data:/opt/airflow/data
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     command: webserver
 
   airflow-scheduler:
