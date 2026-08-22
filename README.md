@@ -5,7 +5,7 @@
 The goal of this project was to design and run a production-like, end-to-end data pipeline that continuously collects real weather data, processes it using a Medallion architecture, and exposes it for analytics and dashboards.
 
 The project focuses on:
-- orchestration with Airflow running 24/7
+- reliable, idempotent orchestration with Airflow running 24/7
 - multi-cloud data movement (AWS → GCP)
 - cost-aware analytics architecture
 - building a small but realistic analytical data platform
@@ -20,7 +20,7 @@ The pipeline has been running continuously for ~3 weeks and ingests hourly weath
 
     OpenWeather API
         ↓
-    Airflow (Docker on VPS)
+    Shared Airflow platform (Docker on VPS)
         ↓
     AWS S3 — Bronze (raw JSON)
         ↓
@@ -55,18 +55,17 @@ This became a deliberate cost-optimization and multi-cloud integration exercise.
 
 #### Orchestration
 
-Airflow runs 24/7 on a VPS inside Docker using docker-compose.
+The repository owns the weather DAGs and transformation logic. The Airflow runtime, Docker image, webserver, scheduler, and PostgreSQL metadata database are maintained separately in [portfolio-airflow-platform](https://github.com/Sebastian9997/portfolio-airflow-platform).
 
-Services:
-- airflow-webserver
-- airflow-scheduler
-- postgres (metadata DB)
+This separation allows one resource-conscious Airflow installation on the VPS to orchestrate multiple independent portfolio projects without making the weather repository responsible for unrelated pipelines.
 
-Each DAG has:
-- retry policy: 1 retry after 5 minutes
-- dependency-based execution between layers
+The weather DAGs use:
 
-One of the initial challenges was getting Airflow running reliably in containers and resolving dependency/version issues.
+- two retries with a five-minute delay;
+- one active DAG run at a time;
+- a dedicated single-slot `weather_pool`;
+- dependency-based execution between Bronze and Silver;
+- explicit failure when any city or source object is missing or invalid.
 
 ---
 
@@ -78,11 +77,14 @@ One of the initial challenges was getting Airflow running reliably in containers
 
 Airflow calls the OpenWeatherMap API and stores raw responses in S3.
 
-Design decision:
-- Raw files are stored immutably
-- Files are filtered by Airflow logical date (ds_nodash) to make the DAG time-travel safe
+Design decisions:
 
-This allows safe backfills and reprocessing.
+- one deterministic object key is generated per city and Airflow logical hour;
+- retries overwrite the same logical-hour object instead of creating duplicates;
+- all eight city responses are validated before the task can succeed;
+- request timeouts and Airflow retries handle temporary API failures.
+
+This makes retries and reprocessing idempotent while preserving hourly history.
 
 ---
 
@@ -96,10 +98,13 @@ Main tasks:
 
 The transformation step:
 - reads all Bronze files for a given Airflow execution date
+- validates that every expected city is represented
+- rejects malformed source objects instead of silently producing partial data
 - flattens nested JSON fields
 - selects analytical columns
 - converts UNIX timestamps to datetime
 - enforces BigQuery-compatible datetime precision
+- deduplicates records by city and extraction timestamp
 - consolidates data from all cities
 
 Output schema:
@@ -134,7 +139,7 @@ Output example:
 
 ### Data Transfer: AWS → GCP
 
-Airflow uses S3ToGCSOperator to synchronize the Silver layer to Google Cloud Storage.
+Airflow uses `S3ToGCSOperator` to synchronize the current daily Silver object to Google Cloud Storage. Historical objects are not recopied during every hourly run.
 
 This step required:
 - configuring credentials for two cloud providers
@@ -239,18 +244,21 @@ This significantly improved understanding of real-world cloud integration challe
 
 ---
 
-#### How to Run the Project
-1. Configure environment variables:
-    - AWS credentials
-	- GCP service account key
-	- OpenWeather API key
-2. Start Airflow:
-    
-        docker-compose up
+### Running and testing
 
-3. Access Airflow UI and enable DAGs.
+Production orchestration is started from the [portfolio-airflow-platform](https://github.com/Sebastian9997/portfolio-airflow-platform) repository. That platform mounts this repository's `dags` directory read-only and supplies the required Airflow connections and variables:
 
-The pipeline will start ingesting data hourly.
+- `aws_s3_conn`
+- `google_cloud_default`
+- `owm_api_key`
+
+Pure transformation and validation helpers can be tested without starting Airflow:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+The pipeline starts ingesting hourly after `1_weather_collector_bronze` is enabled in the shared Airflow UI.
 
 ---
 
