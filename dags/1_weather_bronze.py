@@ -1,89 +1,107 @@
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-from airflow.models import Variable
-from airflow.providers.amazon.aws.hooks.s3 import S3Hook
-from airflow.operators.trigger_dagrun import TriggerDagRunOperator
-from datetime import datetime, timedelta
-import requests
 import json
-import os
+from datetime import timedelta
 
-def fetch_data_and_load_to_s3():
-    # get API key from Airflow Variables
+import pendulum
+import requests
+from airflow import DAG
+from airflow.exceptions import AirflowException
+from airflow.models import Variable
+from airflow.operators.python import PythonOperator
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
+from airflow.providers.amazon.aws.hooks.s3 import S3Hook
+
+from weather_utils import EXPECTED_CITIES, bronze_object_key, payload_to_record
+
+
+S3_CONN_ID = "aws_s3_conn"
+BUCKET_NAME = "de-weather-project-raw-data-owm"
+
+CITY_COORDINATES = {
+    "Warsaw": (52.2297, 21.0122),
+    "Berlin": (52.5200, 13.4050),
+    "Paris": (48.8566, 2.3522),
+    "London": (51.5072, -0.1276),
+    "Madrid": (40.4168, -3.7038),
+    "Rome": (41.9028, 12.4964),
+    "Prague": (50.0755, 14.4378),
+    "Vienna": (48.2082, 16.3738),
+}
+
+
+def fetch_data_and_load_to_s3(data_interval_end, **_):
+    """Fetch a complete city snapshot and store it under retry-safe S3 keys."""
     api_key = Variable.get("owm_api_key")
+    hook = S3Hook(aws_conn_id=S3_CONN_ID)
+    failures = []
 
-    # Connect to S3 using Airflow's S3Hook
-    hook = S3Hook('aws_s3_conn')
-
-    capitals = [
-        {"name": "Warsaw", "lat": 52.2297, "lon": 21.0122},
-        {"name": "Berlin", "lat": 52.5200, "lon": 13.4050},
-        {"name": "Paris", "lat": 48.8566, "lon": 2.3522},
-        {"name": "London", "lat": 51.5072, "lon": -0.1276},
-        {"name": "Madrid", "lat": 40.4168, "lon": -3.7038},
-        {"name": "Rome", "lat": 41.9028, "lon": 12.4964},
-        {"name": "Prague", "lat": 50.0755, "lon": 14.4378},
-        {"name": "Vienna", "lat": 48.2082, "lon": 16.3738}
-    ]
-
-    for city in capitals:
-        city_name = city["name"]
-        lat = city["lat"]
-        lon = city["lon"]
-
-        # New One Call API 3.0 URL
-        url = f"https://api.openweathermap.org/data/3.0/onecall?lat={lat}&lon={lon}&exclude=minutely,hourly,daily,alerts&appid={api_key}&units=metric"
+    for city_name in EXPECTED_CITIES:
+        lat, lon = CITY_COORDINATES[city_name]
+        url = "https://api.openweathermap.org/data/3.0/onecall"
+        params = {
+            "lat": lat,
+            "lon": lon,
+            "exclude": "minutely,hourly,daily,alerts",
+            "appid": api_key,
+            "units": "metric",
+        }
 
         try:
-            response = requests.get(url)
-            response.raise_for_status() 
+            response = requests.get(url, params=params, timeout=(5, 30))
+            response.raise_for_status()
             data = response.json()
-            data['city'] = city_name  # Add city name to the data for better identification
-
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"{city_name.lower()}_{timestamp}.json"
-            s3_key = f"bronze/{city_name.lower()}/{filename}"
-
-            print(f"Sending {city_name} data to S3: {s3_key}")
-            
+            data["city"] = city_name
+            payload_to_record(data)
+            s3_key = bronze_object_key(city_name, data_interval_end)
             hook.load_string(
                 string_data=json.dumps(data),
                 key=s3_key,
-                bucket_name='de-weather-project-raw-data-owm',
-                replace=True
+                bucket_name=BUCKET_NAME,
+                replace=True,
             )
-        except Exception as e:
-            print(f"Error fetching data for {city_name}: {e}")
-            continue
+            print(f"Stored a validated payload for {city_name} at {s3_key}")
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else "unknown"
+            failures.append(f"{city_name}: HTTP status {status}")
+        except requests.RequestException as exc:
+            failures.append(f"{city_name}: {type(exc).__name__}")
+        except Exception as exc:
+            failures.append(f"{city_name}: {type(exc).__name__}: {exc}")
 
-    print("Upload successful!")
+    if failures:
+        raise AirflowException("Incomplete weather snapshot: " + " | ".join(failures))
 
 
-# DAG definition
 default_args = {
-    'owner': 'sebastian',
-    'depends_on_past': False,
-    'start_date': datetime(2026, 3, 12),
-    'retries': 1,
-    'retry_delay': timedelta(minutes=5),
+    "owner": "sebastian",
+    "depends_on_past": False,
+    "start_date": pendulum.datetime(2026, 3, 12, tz="UTC"),
+    "retries": 2,
+    "retry_delay": timedelta(minutes=5),
 }
 
 with DAG(
-    '1_weather_collector_bronze',
+    "1_weather_collector_bronze",
     default_args=default_args,
-    description='Raw data download from OpenWeatherMap and upload to S3',
-    schedule_interval='@hourly',
+    description="Download a complete OpenWeather snapshot to S3 Bronze",
+    schedule_interval="@hourly",
     catchup=False,
-    tags=['weather', 'bronze']
+    max_active_runs=1,
+    tags=["weather", "bronze"],
 ) as dag:
     task_get_data_and_load_to_s3 = PythonOperator(
-        task_id='fetch_data_and_load_to_s3',
-        python_callable=fetch_data_and_load_to_s3
+        task_id="fetch_data_and_load_to_s3",
+        python_callable=fetch_data_and_load_to_s3,
+        pool="weather_pool",
     )
 
     trigger_silver = TriggerDagRunOperator(
-    task_id="trigger_silver_layer",
-    trigger_dag_id="2_weather_silver_transformation",
-)
+        task_id="trigger_silver_layer",
+        trigger_dag_id="2_weather_silver_transformation",
+        conf={
+            "source_ds_nodash": "{{ data_interval_end.in_timezone('UTC').strftime('%Y%m%d') }}"
+        },
+        wait_for_completion=False,
+        pool="weather_pool",
+    )
 
-task_get_data_and_load_to_s3 >> trigger_silver
+    task_get_data_and_load_to_s3 >> trigger_silver
