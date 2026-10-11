@@ -35,23 +35,6 @@ The pipeline has been running continuously for ~3 weeks and ingests hourly weath
 
 ---
 
-### Architecture Evolution
-
-The project originally stored Bronze and Silver data in AWS S3 and copied Silver
-objects to GCS for BigQuery. This demonstrated a multi-cloud integration, but it
-also introduced a second credentials set, IAM model, Airflow provider, and failure
-point without a business requirement for two clouds.
-
-The pipeline now keeps the same Bronze → Silver → Gold boundaries while using
-GCS for both object-storage layers. Raw payloads are retained and can be
-reprocessed from the GCS cutover date onward; only the redundant cross-cloud
-transfer was removed.
-
-The existing Silver object paths remain unchanged so the BigQuery External Table
-and downstream dashboard do not need to move.
-
----
-
 ### Pipeline Details
 
 #### Orchestration
@@ -141,8 +124,7 @@ Output example:
 ### Direct GCS Storage
 
 The Silver task reads Bronze JSON objects from GCS, transforms them in memory,
-and uploads the current daily Parquet object directly to GCS. There is no
-cross-cloud synchronization task.
+and uploads the current daily Parquet object directly to GCS.
 
 This design requires one Google Cloud connection with permission to:
 - list and read objects in the Bronze bucket;
@@ -222,30 +204,15 @@ Several decisions were driven by cost awareness:
 
 ---
 
-### Challenges & Lessons Learned
+### Operational Considerations
 
-Main challenges during development:
+The deployment requires:
 
-Running Airflow in Docker on a VPS
-- container networking issues
-- dependency/version conflicts
-- multiple environment rebuilds
-
-Cloud Authentication
-- GCP service account configuration
-- bucket-level IAM permissions
-
-Architecture Redesign
-
-Switching from the original AWS/GCP design to GCP-only storage required:
-- starting a new raw-data history in GCS while retaining existing Silver history
-- replacing the S3 Airflow hooks with the GCS hook
-- removing the cross-cloud transfer step
-
-Historical S3 raw objects were not migrated because the former AWS credentials were
-no longer valid. Existing historical Silver files remain available in GCS, but raw
-reprocessing is supported only for data collected after the cutover. This trade-off
-avoids restoring an unused AWS account solely for a small portfolio dataset.
+- an always-on Docker-based Airflow runtime;
+- a PostgreSQL metadata database;
+- a Google Cloud service account with bucket-level IAM permissions;
+- an Airflow Variable identifying the Bronze bucket;
+- pinned Python dependencies shared by the scheduler and webserver.
 
 ---
 
