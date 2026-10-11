@@ -30,7 +30,7 @@ def source_date_from_context(conf: Mapping[str, Any] | None, fallback: str) -> s
 
 
 def bronze_object_key(city: str, logical_hour: datetime) -> str:
-    """Build an idempotent S3 key for a city and an Airflow logical hour."""
+    """Build an idempotent object key for a city and an Airflow logical hour."""
     if logical_hour.tzinfo is None:
         logical_hour = logical_hour.replace(tzinfo=timezone.utc)
     timestamp = logical_hour.astimezone(timezone.utc).strftime("%Y%m%dT%H0000Z")

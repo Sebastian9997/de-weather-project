@@ -1,4 +1,4 @@
-# Multi-Cloud Weather Data Pipeline
+# Weather Data Pipeline on Google Cloud
 
 ## Project Goal
 
@@ -6,7 +6,7 @@ The goal of this project was to design and run a production-like, end-to-end dat
 
 The project focuses on:
 - reliable, idempotent orchestration with Airflow running 24/7
-- multi-cloud data movement (AWS → GCP)
+- raw and curated object storage in Google Cloud Storage
 - cost-aware analytics architecture
 - building a small but realistic analytical data platform
 
@@ -22,11 +22,9 @@ The pipeline has been running continuously for ~3 weeks and ingests hourly weath
         ↓
     Shared Airflow platform (Docker on VPS)
         ↓
-    AWS S3 — Bronze (raw JSON)
+    Google Cloud Storage — Bronze (raw JSON)
         ↓
-    AWS S3 — Silver (daily Parquet)
-        ↓
-    Transfer: S3 → Google Cloud Storage
+    Google Cloud Storage — Silver (daily Parquet)
         ↓
     BigQuery External Table
         ↓
@@ -37,17 +35,20 @@ The pipeline has been running continuously for ~3 weeks and ingests hourly weath
 
 ---
 
-### Why Multi-Cloud?
+### Architecture Evolution
 
-Originally the plan was to query data directly from AWS using Athena and connect it to Looker Studio.
-However, the native Athena connector is paid, which made the architecture impractical for a personal project.
+The project originally stored Bronze and Silver data in AWS S3 and copied Silver
+objects to GCS for BigQuery. This demonstrated a multi-cloud integration, but it
+also introduced a second credentials set, IAM model, Airflow provider, and failure
+point without a business requirement for two clouds.
 
-Instead, the pipeline was redesigned to:
-- keep ingestion and storage in AWS
-- move curated data to GCP for analytics
-- use BigQuery External Tables to avoid data duplication costs
+The pipeline now keeps the same Bronze → Silver → Gold boundaries while using
+GCS for both object-storage layers. Raw payloads are retained and can be
+reprocessed from the GCS cutover date onward; only the redundant cross-cloud
+transfer was removed.
 
-This became a deliberate cost-optimization and multi-cloud integration exercise.
+The existing Silver object paths remain unchanged so the BigQuery External Table
+and downstream dashboard do not need to move.
 
 ---
 
@@ -69,13 +70,13 @@ The weather DAGs use:
 
 ---
 
-### Bronze Layer — Raw Data (AWS S3)
+### Bronze Layer — Raw Data (Google Cloud Storage)
 
 **Frequency:** hourly
 
 **Volume:** 8 JSON files/hour (~0.1 MB/day)
 
-Airflow calls the OpenWeatherMap API and stores raw responses in S3.
+Airflow calls the OpenWeatherMap API and stores raw responses in a dedicated GCS bucket.
 
 Design decisions:
 
@@ -88,7 +89,7 @@ This makes retries and reprocessing idempotent while preserving hourly history.
 
 ---
 
-### Silver Layer — Transformation (AWS S3)
+### Silver Layer — Transformation (Google Cloud Storage)
 
 The transformation DAG runs after ingestion completes.
 
@@ -137,16 +138,18 @@ Output example:
 
 ---
 
-### Data Transfer: AWS → GCP
+### Direct GCS Storage
 
-Airflow uses `S3ToGCSOperator` to synchronize the current daily Silver object to Google Cloud Storage. Historical objects are not recopied during every hourly run.
+The Silver task reads Bronze JSON objects from GCS, transforms them in memory,
+and uploads the current daily Parquet object directly to GCS. There is no
+cross-cloud synchronization task.
 
-This step required:
-- configuring credentials for two cloud providers
-- resolving IAM permissions
-- enabling GCS service account key creation (disabled by default)
+This design requires one Google Cloud connection with permission to:
+- list and read objects in the Bronze bucket;
+- create and overwrite objects in the Bronze and Silver buckets.
 
-Multi-cloud authentication and permissions setup was one of the most time-consuming parts of the project.
+Keeping Bronze and Silver in separate buckets allows their access and retention
+policies to be managed independently.
 
 ---
 
@@ -215,7 +218,7 @@ Several decisions were driven by cost awareness:
 - Parquet instead of JSON → cheaper queries
 - Daily file aggregation → fewer small files
 - BigQuery External Tables → no storage duplication
-- Multi-cloud workaround → avoided paid Athena connector
+- Direct GCS writes → fewer credentials and pipeline failure points
 
 ---
 
@@ -228,19 +231,21 @@ Running Airflow in Docker on a VPS
 - dependency/version conflicts
 - multiple environment rebuilds
 
-Multi-Cloud Authentication
-- AWS credential management
+Cloud Authentication
 - GCP service account configuration
-- IAM permissions and default restrictions
+- bucket-level IAM permissions
 
 Architecture Redesign
 
-Switching from Athena to BigQuery required:
-- introducing GCS
-- building a cross-cloud transfer step
-- redesigning the analytics layer
+Switching from the original AWS/GCP design to GCP-only storage required:
+- starting a new raw-data history in GCS while retaining existing Silver history
+- replacing the S3 Airflow hooks with the GCS hook
+- removing the cross-cloud transfer step
 
-This significantly improved understanding of real-world cloud integration challenges.
+Historical S3 raw objects were not migrated because the former AWS credentials were
+no longer valid. Existing historical Silver files remain available in GCS, but raw
+reprocessing is supported only for data collected after the cutover. This trade-off
+avoids restoring an unused AWS account solely for a small portfolio dataset.
 
 ---
 
@@ -248,9 +253,13 @@ This significantly improved understanding of real-world cloud integration challe
 
 Production orchestration is started from the [portfolio-airflow-platform](https://github.com/Sebastian9997/portfolio-airflow-platform) repository. That platform mounts this repository's `dags` directory read-only and supplies the required Airflow connections and variables:
 
-- `aws_s3_conn`
 - `google_cloud_default`
 - `owm_api_key`
+- `weather_bronze_bucket`
+
+`weather_bronze_bucket` is an Airflow Variable containing the GCS bucket name
+without the `gs://` prefix. The Silver bucket remains
+`de-weather-project-silver-gold` so the existing BigQuery external-table path is stable.
 
 Pure transformation and validation helpers can be tested without starting Airflow:
 
@@ -265,7 +274,6 @@ The pipeline starts ingesting hourly after `1_weather_collector_bronze` is enabl
 ### Tech Stack
 - Apache Airflow
 - Docker & docker-compose
-- AWS S3
 - Google Cloud Storage
 - BigQuery (External Tables + Views)
 - Python (Pandas, PyArrow)

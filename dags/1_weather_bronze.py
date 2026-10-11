@@ -8,13 +8,13 @@ from airflow.exceptions import AirflowException
 from airflow.models import Variable
 from airflow.operators.python import PythonOperator
 from airflow.operators.trigger_dagrun import TriggerDagRunOperator
-from airflow.providers.amazon.aws.hooks.s3 import S3Hook
+from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
 from weather_utils import EXPECTED_CITIES, bronze_object_key, payload_to_record
 
 
-S3_CONN_ID = "aws_s3_conn"
-BUCKET_NAME = "de-weather-project-raw-data-owm"
+GCP_CONN_ID = "google_cloud_default"
+BRONZE_BUCKET_VARIABLE = "weather_bronze_bucket"
 
 CITY_COORDINATES = {
     "Warsaw": (52.2297, 21.0122),
@@ -28,10 +28,11 @@ CITY_COORDINATES = {
 }
 
 
-def fetch_data_and_load_to_s3(data_interval_end, **_):
-    """Fetch a complete city snapshot and store it under retry-safe S3 keys."""
+def fetch_data_and_load_to_gcs(data_interval_end, **_):
+    """Fetch a complete city snapshot and store it under retry-safe GCS keys."""
     api_key = Variable.get("owm_api_key")
-    hook = S3Hook(aws_conn_id=S3_CONN_ID)
+    bronze_bucket_name = Variable.get(BRONZE_BUCKET_VARIABLE)
+    hook = GCSHook(gcp_conn_id=GCP_CONN_ID)
     failures = []
 
     for city_name in EXPECTED_CITIES:
@@ -51,14 +52,17 @@ def fetch_data_and_load_to_s3(data_interval_end, **_):
             data = response.json()
             data["city"] = city_name
             payload_to_record(data)
-            s3_key = bronze_object_key(city_name, data_interval_end)
-            hook.load_string(
-                string_data=json.dumps(data),
-                key=s3_key,
-                bucket_name=BUCKET_NAME,
-                replace=True,
+            bronze_key = bronze_object_key(city_name, data_interval_end)
+            hook.upload(
+                bucket_name=bronze_bucket_name,
+                object_name=bronze_key,
+                data=json.dumps(data),
+                mime_type="application/json",
             )
-            print(f"Stored a validated payload for {city_name} at {s3_key}")
+            print(
+                f"Stored a validated payload for {city_name} at "
+                f"gs://{bronze_bucket_name}/{bronze_key}"
+            )
         except requests.HTTPError as exc:
             status = exc.response.status_code if exc.response is not None else "unknown"
             failures.append(f"{city_name}: HTTP status {status}")
@@ -82,15 +86,15 @@ default_args = {
 with DAG(
     "1_weather_collector_bronze",
     default_args=default_args,
-    description="Download a complete OpenWeather snapshot to S3 Bronze",
+    description="Download a complete OpenWeather snapshot to GCS Bronze",
     schedule_interval="@hourly",
     catchup=False,
     max_active_runs=1,
     tags=["weather", "bronze"],
 ) as dag:
-    task_get_data_and_load_to_s3 = PythonOperator(
-        task_id="fetch_data_and_load_to_s3",
-        python_callable=fetch_data_and_load_to_s3,
+    task_get_data_and_load_to_gcs = PythonOperator(
+        task_id="fetch_data_and_load_to_gcs",
+        python_callable=fetch_data_and_load_to_gcs,
         pool="weather_pool",
     )
 
@@ -104,4 +108,4 @@ with DAG(
         pool="weather_pool",
     )
 
-    task_get_data_and_load_to_s3 >> trigger_silver
+    task_get_data_and_load_to_gcs >> trigger_silver
